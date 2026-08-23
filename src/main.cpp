@@ -23,14 +23,14 @@ int main() {
             return window.get_grid_click(); 
         });
         
-        // Bot player initialized with 25k rollouts
         mnk::ai::variant_10_10_4_3::AIPlayer bot(250000);
-        mnk::ai::variant_10_10_4_3::AIPlayer bot2(250000); // 3rd player
+        mnk::ai::variant_10_10_4_3::AIPlayer bot2(250000);
+        mnk::ai::variant_10_10_4_3::AIPlayer bot3(250000);
 
         // 4. Assign players to their turn slots
         window.register_player(1, &bot); // Player 1 is Human
-        window.register_player(2, &human);   // Player 2 is AI
-        window.register_player(3, &bot2);  // Player 3 is AI
+        window.register_player(2, &bot2);   // Player 2 is AI
+        window.register_player(3, &bot3);  // Player 3 is AI
 
         // 5. Start the engine
         window.run();
