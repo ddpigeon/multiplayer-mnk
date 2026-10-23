@@ -21,7 +21,11 @@ add_library(mnk_core STATIC
     src/core/board.h
     src/core/game.cpp
     src/core/game.h
-    src/core/player.h        # <--- Added interface
+    src/core/match.cpp
+    src/core/match.h
+    src/core/launch_settings.cpp
+    src/core/launch_settings.h
+    src/core/player.h
 )
 
 target_include_directories(mnk_core PUBLIC
@@ -32,6 +36,9 @@ target_include_directories(mnk_core PUBLIC
 add_library(mnk_ai STATIC
     src/ai/mcts.cpp
     src/ai/mcts.h
+    src/ai/trainer.cpp
+    src/ai/trainer.h
+    src/ai/ai_player_interface.h
     src/ai/10-10-4-3/ai_player.cpp
     src/ai/10-10-4-3/ai_player.h
 )
@@ -51,7 +58,7 @@ add_library(mnk_ui STATIC
     src/ui/input.h
     src/ui/window.cpp
     src/ui/window.h
-    src/ui/human_player.h    # <--- Added human player
+    src/ui/human_player.h
 )
 
 target_include_directories(mnk_ui PUBLIC
@@ -74,3 +81,4 @@ target_link_libraries(mnk_game PRIVATE
     mnk_core
     raylib
 )
+

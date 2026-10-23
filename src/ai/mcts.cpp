@@ -12,7 +12,6 @@ MCTS::MCTS(int iterations, float exploration_constant)
     rng_.seed(rd());
 }
 
-// --- RESTORED: Strict Depth-2 Tactical Heuristic ---
 std::optional<uint16_t> MCTS::find_critical_move(const core::Game& game, int depth) const {
     core::Board temp = game.board();
     const int cols = temp.cols();
@@ -92,12 +91,18 @@ std::optional<uint16_t> MCTS::find_critical_move(const core::Game& game, int dep
 }
 
 int MCTS::find_best_move(const core::Game& current_game) {
+    const int total_cells = current_game.board().rows() * current_game.board().cols();
+    last_visit_counts_.assign(total_cells, 0);
     if (current_game.board().num_players() > MAX_MCTS_PLAYERS) {
         throw std::invalid_argument("Player count exceeds MAX_MCTS_PLAYERS.");
     }
 
     auto critical_move = find_critical_move(current_game, 2);
-    if (critical_move.has_value()) return critical_move.value();
+    if (critical_move.has_value()) {
+        // all move visits are this move
+        last_visit_counts_[critical_move.value()] = static_cast<uint32_t>(iterations_);
+        return critical_move.value();
+    }
 
     tree_.clear();
     tree_.reserve(iterations_ + 1);
@@ -126,6 +131,10 @@ int MCTS::find_best_move(const core::Game& current_game) {
     int child = tree_[0].first_child_idx;
     
     while (child != -1) {
+        uint16_t move = tree_[child].move_played;
+        if (move < total_cells) {
+            last_visit_counts_[move] = tree_[child].visits;
+        }
         if (tree_[child].visits > max_visits) {
             max_visits = tree_[child].visits;
             best_child = child;

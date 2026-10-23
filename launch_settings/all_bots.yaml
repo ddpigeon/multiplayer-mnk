@@ -1,0 +1,19 @@
+game:
+  m: 10
+  n: 10
+  k: 4
+  p: 3
+
+players:
+  1:
+    type: bot
+    name: bot1
+    strength: 150000
+  2:
+    type: bot
+    name: bot2
+    strength: 150000
+  3:
+    type: bot
+    name: bot3
+    strength: 150000

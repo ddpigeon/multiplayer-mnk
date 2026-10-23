@@ -28,6 +28,7 @@ public:
     MCTS(int iterations = 50000, float exploration_constant = 1.414f);
 
     int find_best_move(const core::Game& current_game);
+    [[nodiscard]] std::vector<uint32_t> get_last_visit_counts() const { return last_visit_counts_; }
 
 private:
     // --- UPDATED: Added root_player tracking for Paranoid mode ---
@@ -45,6 +46,7 @@ private:
     float c_param_;
     std::vector<Node> tree_;
     std::mt19937 rng_;
+    std::vector<uint32_t> last_visit_counts_;
 };
 
 } // namespace mnk::ai

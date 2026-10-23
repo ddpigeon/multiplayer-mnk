@@ -1,42 +1,165 @@
-#include "core/game.h"
-#include "ui/window.h"
-#include "ui/human_player.h"
 #include "ai/10-10-4-3/ai_player.h"
+#include "ai/trainer.h"
+#include "core/launch_settings.h"
+#include "core/match.h"
+#include "core/player.h"
+#include "ui/human_player.h"
+#include "ui/window.h"
+
+#include <functional>
 #include <iostream>
+#include <memory>
+#include <optional>
+#include <stdexcept>
+#include <string>
+#include <utility>
+#include <vector>
 
-int main() {
-    constexpr int ROWS = 10;
-    constexpr int COLS = 10;
-    constexpr int WIN_LENGTH = 4;
-    constexpr int NUM_PLAYERS = 3;
+namespace {
 
+/// No-argument launch falls back to the reference settings document.
+constexpr const char* kDefaultSettingsPath = "launch_settings/default.yaml";
+
+/// The click poll a human seat's UI input adapter uses. Built once per mode
+/// and handed to each human adapter by value in make_adapter.
+using HumanClick = std::function<std::optional<std::pair<int, int>>()>;
+
+std::string seat_type_name(mnk::core::SeatType type) {
+    return type == mnk::core::SeatType::human ? "human" : "bot";
+}
+
+/// The one place that may name the AI and UI implementations: a human Seat
+/// maps to the UI input adapter, a bot Seat to an AI adapter constructed with
+/// that seat's strength. Every seat gets its own owning adapter (bot strengths
+/// are per-seat values, not shared state).
+std::unique_ptr<mnk::core::IPlayer> make_adapter(const mnk::core::Seat& seat,
+                                                 const HumanClick& human_click) {
+    if (seat.type == mnk::core::SeatType::human) {
+        return std::make_unique<mnk::ui::HumanPlayer>(human_click);
+    }
+    return std::make_unique<mnk::ai::variant_10_10_4_3::AIPlayer>(seat.strength);
+}
+
+/// Builds one owning adapter per seat, in seat order (the loader guarantees
+/// seats are exactly 1..p), so the adapter index maps to seat number - 1.
+/// No dummy slot and no raw arrays: the Match registry owns who sits where;
+/// the vector is only the owners keeping the adapters alive.
+std::vector<std::unique_ptr<mnk::core::IPlayer>> build_adapters(
+    const std::vector<mnk::core::Seat>& seats, const HumanClick& human_click) {
+    std::vector<std::unique_ptr<mnk::core::IPlayer>> adapters;
+    adapters.reserve(seats.size());
+    for (const auto& seat : seats) {
+        adapters.push_back(make_adapter(seat, human_click));
+    }
+    return adapters;
+}
+
+/// The one startup log line naming who is seated, for attribution in logs.
+void log_seats(const std::vector<mnk::core::Seat>& seats) {
+    std::cout << "Seats: ";
+    for (std::size_t i = 0; i < seats.size(); ++i) {
+        const auto& seat = seats[i];
+        if (i != 0) std::cout << ", ";
+        std::cout << "Seat " << seat.number << ": ";
+        if (!seat.name.empty()) std::cout << seat.name << " ";
+        std::cout << "(" << seat_type_name(seat.type);
+        if (seat.type == mnk::core::SeatType::bot) {
+            std::cout << ", strength " << seat.strength;
+        }
+        std::cout << ")";
+    }
+    std::cout << '\n';
+}
+
+} // namespace
+
+int main(int argc, char* argv[]) {
     try {
-        // 1. Initialize core game logic
-        mnk::core::Game game(ROWS, COLS, WIN_LENGTH, NUM_PLAYERS);
-        
-        // 2. Initialize Window
-        mnk::ui::Window window(1024, 800, "10,10,4,3 Game Engine", game);
+        mnk::core::LaunchMode mode = mnk::core::LaunchMode::play;
+        std::string settings_path = kDefaultSettingsPath;
+        int num_games = 0;
 
-        // 3. Create Players
-        // Human player callback asks the window if a click happened this frame
-        mnk::ui::HumanPlayer human([&window]() { 
-            return window.get_grid_click(); 
-        });
-        
-        mnk::ai::variant_10_10_4_3::AIPlayer bot(250000);
-        mnk::ai::variant_10_10_4_3::AIPlayer bot2(250000);
-        mnk::ai::variant_10_10_4_3::AIPlayer bot3(250000);
+        if (argc == 1) {
+            // Common case: launch the default settings for play.
+        } else if (const std::string flag = argv[1]; flag == "--launch" && argc == 3) {
+            settings_path = argv[2];
+        } else if (flag == "--train" && argc == 4) {
+            mode = mnk::core::LaunchMode::training;
+            settings_path = argv[2];
+            const std::string num_text = argv[3];
+            try {
+                std::size_t parsed = 0;
+                num_games = std::stoi(num_text, &parsed);
+                if (parsed != num_text.size()) {
+                    throw std::invalid_argument("trailing characters");
+                }
+            } catch (const std::exception&) {
+                std::cerr << "invalid number of games: '" << num_text << "'\n";
+                return 1;
+            }
+            if (num_games < 1) {
+                std::cerr << "number of games must be at least 1, found "
+                          << num_games << "\n";
+                return 1;
+            }
+        } else {
+            std::cerr << "usage: mnk_game [--launch <settings.yaml>] | "
+                         "--train <settings.yaml> <num_games>\n";
+            return 1;
+        }
 
-        // 4. Assign players to their turn slots
-        window.register_player(1, &bot); // Player 1 is Human
-        window.register_player(2, &bot2);   // Player 2 is AI
-        window.register_player(3, &bot3);  // Player 3 is AI
+        // Settings load happens before anything opens: a bad file never gets
+        // a half-launched window or a half-built adapter set.
+        mnk::core::LaunchSettings settings =
+            mnk::core::load(settings_path, mode);
 
-        // 5. Start the engine
-        window.run();
+        if (mode == mnk::core::LaunchMode::play) {
+            const auto& game = settings.macro_config;
+
+            // Match owns the turn loop, seats, and the Game; all numbers here
+            // derive from the one macro configuration the settings declare.
+            mnk::core::Match match(game.m, game.n, game.k, game.p);
+
+            // Window renders and pumps frames; it drives the Match, never the
+            // Game directly. The title derives from the same configuration.
+            mnk::ui::Window window(1024, 800, game.label() + " Game Engine", match);
+
+            // Seat adapters; the Window owns the human input.
+            auto adapters = build_adapters(settings.seats,
+                [&window]() { return window.get_grid_click(); });
+
+            for (std::size_t i = 0; i < settings.seats.size(); ++i) {
+                match.register_seat(settings.seats[i].number, adapters[i].get());
+            }
+
+            log_seats(settings.seats);
+
+            window.run();
+
+        } else { // training: headless, no UI. All seats already bots at load.
+            const auto& game = settings.macro_config;
+
+            // One AI adapter per seat with its own strength, in seat order.
+            // The loader guarantees all-bot seats; no extra check. The human
+            // click source is absent because no human can sit here.
+            auto bots = build_adapters(settings.seats, HumanClick{});
+
+            std::vector<mnk::core::IPlayer*> bot_ptrs;
+            bot_ptrs.reserve(bots.size());
+            for (const auto& bot : bots) {
+                bot_ptrs.push_back(bot.get());
+            }
+
+            // The Trainer's data filename derives from the configured
+            // dimensions; it owns its own per-game Match loop headless.
+            mnk::ai::Trainer trainer(game.m, game.n, game.k, game.p, bot_ptrs);
+            trainer.train(num_games);
+        }
 
     } catch (const std::exception& e) {
-        std::cerr << "Fatal Error: " << e.what() << '\n';
+        // Any settings_error (loader/grammar/legality) and any other
+        // exception: report and exit nonzero, without a half-launched window.
+        std::cerr << e.what() << '\n';
         return 1;
     }
 

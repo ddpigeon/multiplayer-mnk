@@ -1,23 +1,18 @@
 #include "window.h"
 #include <raymath.h>
-#include <array>
 #include <format>
-#include "ai/10-10-4-3/ai_player.h"
 
 namespace mnk::ui {
 
-Window::Window(int width, int height, const std::string& title, core::Game& game)
-    : screen_width_(width), screen_height_(height), game_(game) {
-    
+Window::Window(int width, int height, const std::string& title, core::Match& match)
+    : screen_width_(width), screen_height_(height), match_(match) {
+
     SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_MSAA_4X_HINT);
     InitWindow(screen_width_, screen_height_, title.c_str());
     SetTargetFPS(60);
 
-    // Resize player array to hold all players (1-indexed, so +1)
-    players_.resize(game_.board().num_players() + 1, nullptr);
-
     // Pre-calculate high-contrast colors for N players using HSV spacing
-    const int num_p = game_.board().num_players();
+    const int num_p = match_.game().board().num_players();
     player_colors_.reserve(num_p + 1);
     player_colors_.push_back(BLANK); // Index 0 unused (EMPTY_CELL)
 
@@ -27,8 +22,8 @@ Window::Window(int width, int height, const std::string& title, core::Game& game
     }
 
     metrics_ = InputHandler::compute_metrics(
-        game_.board().rows(),
-        game_.board().cols(),
+        match_.game().board().rows(),
+        match_.game().board().cols(),
         static_cast<float>(screen_width_),
         static_cast<float>(screen_height_),
         TOP_BAR_HEIGHT
@@ -39,15 +34,9 @@ Window::~Window() {
     CloseWindow();
 }
 
-void Window::register_player(int player_id, core::IPlayer* player) {
-    if (player_id > 0 && static_cast<size_t>(player_id) < players_.size()) {
-        players_[player_id] = player;
-    }
-}
-
 std::optional<std::pair<int, int>> Window::get_grid_click() const {
     if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
-        return InputHandler::screen_to_grid(GetMousePosition(), metrics_, game_.board().rows(), game_.board().cols());
+        return InputHandler::screen_to_grid(GetMousePosition(), metrics_, match_.game().board().rows(), match_.game().board().cols());
     }
     return std::nullopt;
 }
@@ -72,32 +61,26 @@ void Window::update() {
         screen_width_ = GetScreenWidth();
         screen_height_ = GetScreenHeight();
         metrics_ = InputHandler::compute_metrics(
-                game_.board().rows(),
-                game_.board().cols(),
+                match_.game().board().rows(),
+                match_.game().board().cols(),
                 static_cast<float>(screen_width_),
                 static_cast<float>(screen_height_),
                 TOP_BAR_HEIGHT
                 );
     }
 
-    // Keyboard Shortcuts
+    // Keyboard shortcuts go through the Match: the Window never touches
+    // the Game directly
     if (IsKeyPressed(KEY_R)) {
-        game_.restart();
+        match_.restart();
     }
     if (IsKeyPressed(KEY_U) || (IsKeyDown(KEY_LEFT_CONTROL) && IsKeyPressed(KEY_Z))) {
-        game_.undo_move();
+        match_.undo();
     }
 
-    if (game_.state() == core::GameState::IN_PROGRESS) {
-        core::Player current_p = game_.current_player();
-
-        if (players_[current_p] != nullptr) {
-            auto move = players_[current_p]->get_move(game_);
-            if (move.has_value()) {
-                game_.play_move(move->first, move->second);
-            }
-        }
-    }
+    // One turn step per frame; not-ready players (e.g. waiting for a human
+    // click) simply step as None and re-poll next frame
+    match_.step();
 }
 
 void Window::render() {
@@ -114,18 +97,20 @@ void Window::draw_top_bar() {
     DrawRectangle(0, 0, screen_width_, static_cast<int>(TOP_BAR_HEIGHT), Color{18, 20, 26, 255});
     DrawLine(0, static_cast<int>(TOP_BAR_HEIGHT), screen_width_, static_cast<int>(TOP_BAR_HEIGHT), Color{45, 52, 64, 255});
 
+    const core::Game& game = match_.game();
+
     std::string status_text;
     Color status_color = RAYWHITE;
 
-    switch (game_.state()) {
+    switch (game.state()) {
         case core::GameState::IN_PROGRESS: {
-                                               const core::Player p = game_.current_player();
+                                               const core::Player p = game.current_player();
                                                status_text = std::format("Player {}'s Turn", p);
                                                status_color = get_player_color(p);
                                                break;
                                            }
         case core::GameState::WIN: {
-                                       const core::Player p = game_.winner();
+                                       const core::Player p = game.winner();
                                        status_text = std::format("PLAYER {} WINS!", p);
                                        status_color = get_player_color(p);
                                        break;
@@ -146,7 +131,8 @@ void Window::draw_top_bar() {
 }
 
 void Window::draw_board() {
-    const auto& board = game_.board();
+    const core::Game& game = match_.game();
+    const auto& board = game.board();
     const int rows = board.rows();
     const int cols = board.cols();
 
@@ -157,7 +143,7 @@ void Window::draw_board() {
     DrawRectangleRec(board_rect, Color{32, 38, 48, 255});
 
     // Hover Highlight
-    if (game_.state() == core::GameState::IN_PROGRESS) {
+    if (game.state() == core::GameState::IN_PROGRESS) {
         const auto hover = InputHandler::screen_to_grid(
                 GetMousePosition(), metrics_, rows, cols);
 
@@ -212,9 +198,9 @@ void Window::draw_cell_content(int row, int col, core::Player player) {
     std::string p_str = std::to_string(player);
     int font_size = static_cast<int>(metrics_.cell_size * 0.4f);
     int text_w = MeasureText(p_str.c_str(), font_size);
-    DrawText(p_str.c_str(), 
-            static_cast<int>(center_x - text_w / 2.0f), 
-            static_cast<int>(center_y - font_size / 2.0f), 
+    DrawText(p_str.c_str(),
+            static_cast<int>(center_x - text_w / 2.0f),
+            static_cast<int>(center_y - font_size / 2.0f),
             font_size, color);
 }
 
